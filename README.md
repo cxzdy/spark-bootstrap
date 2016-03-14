@@ -1,10 +1,4 @@
-# This is a com.mvad.spark.demo using parquet file
-
-There are three ways to use parquet:
-
-* Pig
-* MapReduce
-* Spark/PySpark
+# This is a bootstap project for using spark
 
 
 # How to Build
@@ -20,6 +14,6 @@ tar.gz package is released in dist directory
 # How to Run
 
 <pre>
-cd dist/parquet-com.mvad.spark.demo-parent_2.10-YYmmddHHMMSS-dist/parquet-com.mvad.spark.demo-parent_2.10-YYmmddHHMMSS/
+cd dist/spark-bootstap-YYmmddHHMMSS-dist/spark-bootstrap-YYmmddHHMMSS/
 bin/run-***.sh
 </pre>
