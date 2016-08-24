@@ -21,7 +21,7 @@ $SPARK_HOME/bin/spark-submit \
 --conf spark.streaming.backpressure.enabled=true \
 --driver-memory 10G \
 --executor-cores 1 --executor-memory 15g \
---class com.mvad.spark.demo.hbase.Kafka2HBase $SPARK_JAR zk1ss,zk2ss,zk3ss:2191/kafka08 Kafka2ESIndexer d.b.6,d.b.6.m 5 1 5
+--class com.mvad.spark.demo.hbase.DSPRealTimeSessionization $SPARK_JAR d.b.6,d.b.6.m 5 dspsession
 
 
 

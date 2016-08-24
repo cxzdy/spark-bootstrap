@@ -25,7 +25,7 @@ import org.elasticsearch.spark._
   */
 object KafkaDSPEvent2ESIndexer {
   def main(args: Array[String]) {
-    if (args.length != 6) {
+    if (args.length != 3) {
       System.err.println("Usage: KafkaDSPEvent2ESIndexer <topics> <batchInteval> <esIndexName>")
       System.exit(1)
     }

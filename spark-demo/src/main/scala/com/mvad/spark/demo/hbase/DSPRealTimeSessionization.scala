@@ -22,7 +22,7 @@ import scala.collection.JavaConversions._
   */
 object DSPRealTimeSessionization {
   def main(args: Array[String]) {
-    if (args.length != 6) {
+    if (args.length != 3) {
       System.err.println("Usage: RealTimeSessionization <topics> <batchInteval> <htablename>")
       System.exit(1)
     }
