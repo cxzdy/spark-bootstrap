@@ -62,7 +62,7 @@
                 <descriptor>src/main/assembly/assembly.xml</descriptor>
               </descriptors>
               <outputDirectory>${project.parent.basedir}/dist/</outputDirectory>
-              <finalName>${project.parent.artifactId}-${timestamp}</finalName>
+              <finalName>${project.parent.artifactId}-${project.parent.version}</finalName>
             </configuration>
           </execution>
         </executions>
