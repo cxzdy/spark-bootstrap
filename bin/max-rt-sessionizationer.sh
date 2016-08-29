@@ -14,14 +14,14 @@ $SPARK_HOME/bin/spark-submit \
 --conf spark.speculation=true \
 --conf spark.dynamicAllocation.enabled=false \
 --conf spark.shuffle.service.enabled=false \
---conf spark.cores.max=200 \
+--conf spark.cores.max=300 \
 --conf spark.streaming.stopGracefullyOnShutdown=true \
---conf spark.streaming.kafka.maxRatePerPartition=10000 \
+--conf spark.streaming.kafka.maxRatePerPartition=2000 \
 --conf spark.streaming.blockInterval=500ms \
 --conf spark.streaming.backpressure.enabled=true \
---driver-memory 10G \
---executor-cores 1 --executor-memory 15g \
---class com.mvad.spark.demo.hbase.DSPRealTimeSessionization $SPARK_JAR d.b.6,d.b.6.m 5 dspsession
+--driver-memory 5G \
+--executor-cores 1 --executor-memory 3g \
+--class com.mvad.spark.demo.hbase.MaxRealTimeSessionization $SPARK_JAR e.u.6,e.s.6.e.c.6 5 maxsession
 
 
 
