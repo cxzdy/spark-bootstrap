@@ -5,11 +5,11 @@ import java.util
 import com.mediav.data.log.LogUtils
 import com.mediav.data.log.unitedlog.UnitedEvent
 import kafka.serializer.StringDecoder
-import org.apache.hadoop.hbase.HBaseConfiguration
-import org.apache.hadoop.hbase.client.Put
+import org.apache.hadoop.hbase.client.{ConnectionFactory, HTable, Put}
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapreduce.TableOutputFormat
 import org.apache.hadoop.hbase.util.Bytes
+import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka._
@@ -57,29 +57,67 @@ object DSPRealTimeSessionization {
 
     val kafkaStream = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topicsSet)
     val lines = kafkaStream.map(_._2)
-    lines.foreachRDD((rdd: RDD[String], time: Time) => {
+    val impressions = lines.map(base64str =>
+      LogUtils.ThriftBase64decoder(base64str, classOf[com.mediav.data.log.unitedlog.UnitedEvent]))
+      .flatMap(toImpressions)
 
+    //    impressions.foreachRDD((rdd: RDD[(Long, UnitedEvent)], time: Time) => {
+    //      rdd.foreachPartition(partitionOfRecords => {
+    //        partitionOfRecords.foreach(pair => {
+    //
+    //        }
+    //      })
+    //      )
+    //    }
+
+    //    impressions.foreachRDD((rdd: RDD[(Long, UnitedEvent)], time: Time) => {
+    //
+    //      rdd.foreachPartition(partitionOfRecords => {
+    //        val conf = HBaseConfiguration.create()
+    //        conf.set("hbase.zookeeper.quorum", "nn7ss.prod.mediav.com,nn8ss.prod.mediav.com,nn9ss.prod.mediav.com")
+    //
+    //        val conn = ConnectionFactory.createConnection(conf)
+    //        val table = new HTable(conf, TableName.valueOf(htablename))
+    ////        table.setAutoFlush(false, false)
+    //        table.setWriteBufferSize(3 * 1024 * 1024)
+    //
+    //        partitionOfRecords.foreach(pair => {
+    //          val put = toPut(pair)
+    //          table.put(put._2)
+    //        })
+    //        table.flushCommits()
+    //        table.close()
+    //      })
+    //    })
+
+
+    impressions.foreachRDD((rdd: RDD[(Long, UnitedEvent)], time: Time) => {
       try {
-        val events = rdd.map(base64str =>
-          LogUtils.ThriftBase64decoder(base64str, classOf[com.mediav.data.log.unitedlog.UnitedEvent]))
-          .flatMap(toImpressions)
-//          .flatMap(unitedEvent => UnitedEventTransformer.transform2DSPEvent(unitedEvent).toArray())
-//          .filter(e => e.isInstanceOf[DSPEvent]).map(e => e.asInstanceOf[DSPEvent])
-        val raw = events.map(toPut)
-        val index = events.map(toIndex)
+        val events = rdd.map(toPut)
 
         val conf = HBaseConfiguration.create()
         conf.set("hbase.zookeeper.quorum", "nn7ss.prod.mediav.com,nn8ss.prod.mediav.com,nn9ss.prod.mediav.com")
         conf.set("mapreduce.outputformat.class", "org.apache.hadoop.hbase.mapreduce.TableOutputFormat")
         conf.set(TableOutputFormat.OUTPUT_TABLE, htablename)
-        raw.saveAsNewAPIHadoopDataset(conf)
-
-        conf.set(TableOutputFormat.OUTPUT_TABLE, htablename + "-index-mvid")
-        index.saveAsNewAPIHadoopDataset(conf)
+        events.saveAsNewAPIHadoopDataset(conf)
       } catch {
         case ex: NullPointerException => log.warn("NPE: ", ex)
       }
     })
+
+    //    impressions.foreachRDD((rdd: RDD[(Long, UnitedEvent)], time: Time) => {
+    //      try {
+    //        val index = rdd.map(toIndex)
+    //
+    //        val indexconf = HBaseConfiguration.create()
+    //        indexconf.set("hbase.zookeeper.quorum", "nn7ss.prod.mediav.com,nn8ss.prod.mediav.com,nn9ss.prod.mediav.com")
+    //        indexconf.set("mapreduce.outputformat.class", "org.apache.hadoop.hbase.mapreduce.TableOutputFormat")
+    //        indexconf.set(TableOutputFormat.OUTPUT_TABLE, htablename + "-index-mvid")
+    //        index.saveAsNewAPIHadoopDataset(indexconf)
+    //      } catch {
+    //        case ex: NullPointerException => log.warn("NPE: ", ex)
+    //      }
+    //    })
     ssc.start()
     ssc.awaitTermination()
   }
@@ -89,12 +127,13 @@ object DSPRealTimeSessionization {
     val impList = new util.ArrayList[(Long, UnitedEvent)]()
 
     val eventType = event.getEventType.getType
-    if (eventType == 200 || eventType == 115 ) {
+    if (eventType == 200 || eventType == 115) {
       // d.u or d.s
       val impressionInfos = event.getAdvertisementInfo.getImpressionInfos
-
-      for (impressionInfo <- impressionInfos){
-        impList.add((impressionInfo.getShowRequestId, event))
+      if (impressionInfos != null) {
+        for (impressionInfo <- impressionInfos) {
+          impList.add((impressionInfo.getShowRequestId, event))
+        }
       }
     } else if (eventType == 99) {
       // d.c
@@ -106,7 +145,7 @@ object DSPRealTimeSessionization {
 
   def toPut(pair: (Long, UnitedEvent)) = {
 
-    val showRequestId = pair._1
+    val showRequestId = pair._1.toString.hashCode
     val event = pair._2
     val eventType = event.getEventType.getType
     val ts = event.getEventTime
