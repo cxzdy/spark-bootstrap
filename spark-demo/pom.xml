@@ -233,12 +233,12 @@
             <jvmArg>-XX:MaxPermSize=${MaxPermGen}</jvmArg>
             <jvmArg>-XX:ReservedCodeCacheSize=${CodeCacheSize}</jvmArg>
           </jvmArgs>
-          <javacArgs>
-            <javacArg>-source</javacArg>
-            <javacArg>${java.version}</javacArg>
-            <javacArg>-target</javacArg>
-            <javacArg>${java.version}</javacArg>
-          </javacArgs>
+          <!--<javacArgs>-->
+            <!--<javacArg>-source</javacArg>-->
+            <!--<javacArg>${java.version}</javacArg>-->
+            <!--<javacArg>-target</javacArg>-->
+            <!--<javacArg>${java.version}</javacArg>-->
+          <!--</javacArgs>-->
         </configuration>
       </plugin>
       <plugin>
