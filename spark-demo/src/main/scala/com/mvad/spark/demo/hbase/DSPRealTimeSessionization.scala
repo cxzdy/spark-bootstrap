@@ -13,7 +13,7 @@ import org.apache.hadoop.hbase.mapreduce.TableOutputFormat
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming._
-import org.apache.spark.streaming.kafka._
+import org.apache.spark.streaming.kafka.KafkaUtils
 import org.apache.spark.{SparkConf, SparkContext}
 import org.slf4j.LoggerFactory
 
@@ -58,7 +58,7 @@ object DSPRealTimeSessionization {
     val lines = kafkaStream.map(_._2)
     val impressions = lines.flatMap(toImpressions)
 
-    impressions.foreachRDD((rdd: RDD[(Long, String)], time: Time) => {
+    impressions.foreachRDD((rdd: RDD[(Long, Array[Byte])], time: Time) => {
       try {
         val events = rdd.map(toPut)
 
@@ -100,7 +100,7 @@ object DSPRealTimeSessionization {
 
   // flatten log to get all impressions
   def toImpressions(line: String) = {
-    val impList = new util.ArrayList[(Long, String)]()
+    val impList = new util.ArrayList[(Long, Array[Byte])]()
 
     val raw = Base64.getDecoder.decode(line)
     val event = LogUtils.ThriftBase64decoder(line, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
@@ -111,26 +111,26 @@ object DSPRealTimeSessionization {
       val impressionInfos = event.getAdvertisementInfo.getImpressionInfos
       if (impressionInfos != null) {
         for (impressionInfo <- impressionInfos) {
-          impList.add((impressionInfo.getShowRequestId, line))
+          impList.add((impressionInfo.getShowRequestId, raw))
         }
       }
     } else if (eventType == 99) {
       // d.c
       val impressionInfo = event.getAdvertisementInfo.getImpressionInfo
-      impList.add((impressionInfo.getShowRequestId, line))
+      impList.add((impressionInfo.getShowRequestId, raw))
     }
 
     impList
   }
 
   // convert to hbase put
-  def toPut(pair: (Long, String)) = {
+  def toPut(pair: (Long, Array[Byte])) = {
 
     // showRequestId's hashcode used for rowkey for random distributed
     val rowkey = pair._1.toString.hashCode
 
-    val eventLine = pair._2
-    val event = LogUtils.ThriftBase64decoder(eventLine, classOf[UnitedEvent])
+    val raw = pair._2
+    val event = LogUtils.thriftBinarydecoder(raw, classOf[UnitedEvent])
     val logId = event.getLogId
     val eventType = event.getEventType.getType
     val ts = event.getEventTime
@@ -139,13 +139,13 @@ object DSPRealTimeSessionization {
 
     if (eventType == 200) {
       // e.u
-      put.addColumn(Bytes.toBytes("u"), Bytes.toBytes(logId), ts, Base64.getDecoder.decode(eventLine))
+      put.addColumn(Bytes.toBytes("u"), Bytes.toBytes(logId), ts, raw)
     } else if (eventType == 115) {
       // e.s
-      put.addColumn(Bytes.toBytes("s"), Bytes.toBytes(logId), ts, Base64.getDecoder.decode(eventLine))
+      put.addColumn(Bytes.toBytes("s"), Bytes.toBytes(logId), ts, raw)
     } else if (eventType == 99) {
       // e.c
-      put.addColumn(Bytes.toBytes("c"), Bytes.toBytes(logId), ts, Base64.getDecoder.decode(eventLine))
+      put.addColumn(Bytes.toBytes("c"), Bytes.toBytes(logId), ts, raw)
     }
 
     (new ImmutableBytesWritable, put)
