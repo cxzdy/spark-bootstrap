@@ -32,9 +32,10 @@ public class DSPSessionBuilder extends Configured implements Tool {
     @Override
     protected void map(ImmutableBytesWritable key, Result value, Context context) throws IOException, InterruptedException {
       Integer rowkey = ByteBuffer.wrap(value.getRow()).getInt();
-      Integer usize = value.getColumnCells(Bytes.toBytes("u"), Bytes.toBytes("raw")).size();
-      Integer ssize = value.getColumnCells(Bytes.toBytes("s"), Bytes.toBytes("raw")).size();
-      Integer csize = value.getColumnCells(Bytes.toBytes("c"), Bytes.toBytes("raw")).size();
+
+      Integer usize = value.getFamilyMap(Bytes.toBytes("u")).size();
+      Integer ssize = value.getFamilyMap(Bytes.toBytes("u")).size();
+      Integer csize = value.getFamilyMap(Bytes.toBytes("u")).size();
 
       IntWritable row = new IntWritable(rowkey);
       Text text = new Text(usize + "\t" + ssize + "\t" + csize);
