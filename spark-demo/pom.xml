@@ -34,10 +34,6 @@
       <version>2.0.1-SNAPSHOT</version>
       <exclusions>
         <exclusion>
-          <groupId>org.apache.thrift</groupId>
-          <artifactId>libthrift</artifactId>
-        </exclusion>
-        <exclusion>
           <groupId>com.google.protobuf</groupId>
           <artifactId>protobuf-java</artifactId>
         </exclusion>
