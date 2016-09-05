@@ -22,7 +22,7 @@ import scala.collection.JavaConversions._
 /**
   * Usage:
   * spark-submit --class \
-  * com.mvad.spark.demo.hbase.DSPRealTimeSessionization d.b.6,d.b.6.m,d.c.6,d.c.6.m 5 dspsession
+  * com.mvad.spark.demo.hbase.DSPRealTimeSessionization d.u.6,d.u.6.m,d.s.6,d.s.6.m,d.c.6,d.c.6.m 5 dspsession
   */
 object DSPRealTimeSessionization {
   val log = LoggerFactory.getLogger(this.getClass)

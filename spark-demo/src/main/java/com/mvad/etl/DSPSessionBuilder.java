@@ -34,8 +34,8 @@ public class DSPSessionBuilder extends Configured implements Tool {
       Integer rowkey = ByteBuffer.wrap(value.getRow()).getInt();
 
       Integer usize = value.getFamilyMap(Bytes.toBytes("u")).size();
-      Integer ssize = value.getFamilyMap(Bytes.toBytes("u")).size();
-      Integer csize = value.getFamilyMap(Bytes.toBytes("u")).size();
+      Integer ssize = value.getFamilyMap(Bytes.toBytes("s")).size();
+      Integer csize = value.getFamilyMap(Bytes.toBytes("c")).size();
 
       IntWritable row = new IntWritable(rowkey);
       Text text = new Text(usize + "\t" + ssize + "\t" + csize);
@@ -70,8 +70,8 @@ public class DSPSessionBuilder extends Configured implements Tool {
     job.setJobName("DSPSessionBuilder");
 
     Scan scan = new Scan();
-    scan.setMaxVersions();
     scan.setBatch(10000);
+//    scan.setTimeRange();
 
     TableMapReduceUtil.initTableSnapshotMapperJob(snapshot,scan,SessionizationMapper.class, IntWritable.class, Text.class, job, true, new Path("/tmp/dspsessionbuilder"));
 
