@@ -1,4 +1,4 @@
-package com.mvad.spark.demo.hbase
+package com.mvad.spark.demo.streaming
 
 import java.util
 import java.util.Base64
@@ -6,6 +6,9 @@ import java.util.Base64
 import com.mediav.data.log.LogUtils
 import com.mediav.data.log.unitedlog.UnitedEvent
 import kafka.serializer.StringDecoder
+import kafka.utils.ZkUtils
+import kafka.utils.ZKStringSerializer
+import org.I0Itec.zkclient.ZkClient
 import org.apache.hadoop.hbase.HBaseConfiguration
 import org.apache.hadoop.hbase.client.Put
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
@@ -13,7 +16,7 @@ import org.apache.hadoop.hbase.mapreduce.TableOutputFormat
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming._
-import org.apache.spark.streaming.kafka.KafkaUtils
+import org.apache.spark.streaming.kafka.{HasOffsetRanges, KafkaUtils, OffsetRange}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.slf4j.LoggerFactory
 
@@ -54,12 +57,32 @@ object DSPRealTimeSessionization {
       "metadata.broker.list" -> brokers,
       "serializer.class" -> "kafka.serializer.StringEncoder")
 
+    val zkConnect = "zk1ss.prod.mediav.com:2191,zk2ss.prod.mediav.com:2191,zk3ss.prod.mediav.com:2191"
+    val zkSessionTimeoutMs = 6000
+    val zkConnectionTimeoutMs = 6000
+
+    val zkClient = new ZkClient(zkConnect, zkSessionTimeoutMs, zkConnectionTimeoutMs, ZKStringSerializer)
+    val rootPath = s"/streaming/${sc.getConf.get("spark.app.name")}/${sc.getConf.getAppId}"
+    ZkUtils.makeSurePersistentPathExists(zkClient, rootPath)
+
     val kafkaStream = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topicsSet)
-    val lines = kafkaStream.map(_._2)
+    var offsetRanges = Array[OffsetRange]()
+    val lines = kafkaStream.transform {
+      rdd =>
+        offsetRanges = rdd.asInstanceOf[HasOffsetRanges].offsetRanges
+        rdd
+    }.map(_._2)
     val impressions = lines.flatMap(toImpressions)
 
     impressions.foreachRDD((rdd: RDD[(Long, Array[Byte])], time: Time) => {
       try {
+        // record offset to zk
+        for (o <- offsetRanges) {
+          val path = s"${rootPath}/${o.topic}/${o.partition}"
+          ZkUtils.makeSurePersistentPathExists(zkClient, path)
+          ZkUtils.updatePersistentPath(zkClient, path, o.fromOffset.toString)
+        }
+
         val events = rdd.map(toPut)
 
         val conf = HBaseConfiguration.create()
@@ -94,6 +117,7 @@ object DSPRealTimeSessionization {
     })
     */
 
+    ssc.addStreamingListener(new StreamingJobMonitor())
     ssc.start()
     ssc.awaitTermination()
   }
