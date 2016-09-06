@@ -36,8 +36,10 @@ object DSPRealTimeSessionization {
       System.exit(1)
     }
 
+    log.info(s"Starting SparkStreaming Job : ${this.getClass.getName}")
+
     val Array(topics, batchInteval, htablename) = args
-    val sparkConf = new SparkConf().setAppName("DSPRealTimeSessionization")
+    val sparkConf = new SparkConf().setAppName(this.getClass.getSimpleName)
     val sc = new SparkContext(sparkConf)
     val ssc = new StreamingContext(sc, Seconds(batchInteval.toInt))
     ssc.checkpoint("checkpoint-DSPRealTimeSessionization")
@@ -56,14 +58,17 @@ object DSPRealTimeSessionization {
     val kafkaParams = Map[String, String](
       "metadata.broker.list" -> brokers,
       "serializer.class" -> "kafka.serializer.StringEncoder")
+    log.info(s"Initializing kafka Receiver, topics: ${topics} ; brokers: ${brokers} ; kafkaParams: ${kafkaParams.mkString(",")} ")
 
-    val zkConnect = "zk1ss.prod.mediav.com:2191,zk2ss.prod.mediav.com:2191,zk3ss.prod.mediav.com:2191"
+    val zkConnect = "zk1ss.prod.mediav.com:2191,zk2ss.prod.mediav.com:2191,zk3ss.prod.mediav.com:2191,zk12ss.prod.mediav.com:2191,zk13ss.prod.mediav.com:2191"
     val zkSessionTimeoutMs = 6000
     val zkConnectionTimeoutMs = 6000
 
     val zkClient = new ZkClient(zkConnect, zkSessionTimeoutMs, zkConnectionTimeoutMs, ZKStringSerializer)
-    val rootPath = s"/streaming/${sc.getConf.get("spark.app.name")}/${sc.getConf.getAppId}"
-    ZkUtils.makeSurePersistentPathExists(zkClient, rootPath)
+    val zkRootPath = s"/streaming/${sc.getConf.get("spark.app.name")}/${sc.getConf.getAppId}"
+    log.info(s"Initializing Job monitor ZK Path, zkConnect: ${zkConnect} ; " +
+      s"zkSessionTimeoutMs: ${zkSessionTimeoutMs} ; zkConnectionTimeoutMs: ${zkConnectionTimeoutMs} ; zkRootPath: ${zkRootPath}")
+    ZkUtils.makeSurePersistentPathExists(zkClient, zkRootPath)
 
     val kafkaStream = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](ssc, kafkaParams, topicsSet)
     var offsetRanges = Array[OffsetRange]()
@@ -72,28 +77,64 @@ object DSPRealTimeSessionization {
         offsetRanges = rdd.asInstanceOf[HasOffsetRanges].offsetRanges
         rdd
     }.map(_._2)
-    val impressions = lines.flatMap(toImpressions)
 
-    impressions.foreachRDD((rdd: RDD[(Long, Array[Byte])], time: Time) => {
+    lines.foreachRDD((rdd: RDD[String], time: Time) => {
       try {
         // record offset to zk
         for (o <- offsetRanges) {
-          val path = s"${rootPath}/${o.topic}/${o.partition}"
-          ZkUtils.makeSurePersistentPathExists(zkClient, path)
-          ZkUtils.updatePersistentPath(zkClient, path, o.fromOffset.toString)
+          log.info(s"${o.topic}, ${o.partition}, ${o.fromOffset}, ${o.untilOffset}")
+          //          val zkClient = new ZkClient(zkConnect, zkSessionTimeoutMs, zkConnectionTimeoutMs, ZKStringSerializer)
+          //          val path = s"${zkRootPath}/offset/${o.topic}/${o.partition}"
+          //          ZkUtils.makeSurePersistentPathExists(zkClient, path)
+          //          ZkUtils.updatePersistentPath(zkClient, path, o.fromOffset.toString)
+          //          zkClient.close()
         }
 
-        val events = rdd.map(toPut)
+        val puts = rdd.flatMap(line => {
+          val raw = Base64.getDecoder.decode(line)
+          val ue = LogUtils.ThriftBase64decoder(line, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
+          if (ue != null && ue.isSetAdvertisementInfo && (ue.getAdvertisementInfo.isSetImpressionInfo || ue.getAdvertisementInfo.isSetImpressionInfos)) {
+            val eventType = ue.getEventType.getType
+            val family = if (eventType == 200) "u"
+            else if (eventType == 115) "s"
+            else if (eventType == 99) "c"
+            else throw new Exception(s"not supported eventType: ${eventType}, only support topic .u/.s/.c")
+
+            if (eventType == 200 || eventType == 115) {
+              // .u or .s flatten impressionInfos
+              val impressionInfos = ue.getAdvertisementInfo.getImpressionInfos
+              impressionInfos.map(impressionInfo => {
+                val showRequestId = impressionInfo.getShowRequestId
+
+                val put = new Put(Bytes.toBytes(showRequestId.toString.hashCode))
+                put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
+                (new ImmutableBytesWritable, put)
+              })
+            } else {
+              // .c
+              val impressionInfo = ue.getAdvertisementInfo.getImpressionInfo
+              val showRequestId = impressionInfo.getShowRequestId
+
+              val put = new Put(Bytes.toBytes(showRequestId.toString.hashCode))
+              put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
+              Seq((new ImmutableBytesWritable, put))
+            }
+          } else {
+            Seq()
+          }
+        })
 
         val conf = HBaseConfiguration.create()
         conf.set("hbase.zookeeper.quorum", "nn7ss.prod.mediav.com,nn8ss.prod.mediav.com,nn9ss.prod.mediav.com")
         conf.set("mapreduce.outputformat.class", "org.apache.hadoop.hbase.mapreduce.TableOutputFormat")
+        conf.setLong("hbase.client.write.buffer", 3 * 1024 * 1024)
         conf.set(TableOutputFormat.OUTPUT_TABLE, htablename)
-        events.saveAsNewAPIHadoopDataset(conf)
+        puts.saveAsNewAPIHadoopDataset(conf)
       } catch {
         case ex: NullPointerException => log.warn("NPE: ", ex)
       }
     })
+
 
     /*
     impressions.foreachRDD((rdd: RDD[(Long, String)], time: Time) => {
@@ -117,44 +158,25 @@ object DSPRealTimeSessionization {
     })
     */
 
-    ssc.addStreamingListener(new StreamingJobMonitor())
+    Runtime.getRuntime().addShutdownHook {
+      new Thread() {
+        override def run() {
+          ZkUtils.deletePath(zkClient, zkRootPath)
+          zkClient.close()
+        }
+      }
+    }
+    ssc.addStreamingListener(new StreamingJobMonitor(ssc, zkClient))
     ssc.start()
     ssc.awaitTermination()
   }
 
-  // flatten log to get all impressions
-  def toImpressions(line: String) = {
-    val impList = new util.ArrayList[(Long, Array[Byte])]()
-
-    val raw = Base64.getDecoder.decode(line)
-    val event = LogUtils.ThriftBase64decoder(line, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
-
-    val eventType = event.getEventType.getType
-    if (eventType == 200 || eventType == 115) {
-      // d.u or d.s
-      val impressionInfos = event.getAdvertisementInfo.getImpressionInfos
-      if (impressionInfos != null) {
-        for (impressionInfo <- impressionInfos) {
-          impList.add((impressionInfo.getShowRequestId, raw))
-        }
-      }
-    } else if (eventType == 99) {
-      // d.c
-      val impressionInfo = event.getAdvertisementInfo.getImpressionInfo
-      impList.add((impressionInfo.getShowRequestId, raw))
-    }
-
-    impList
-  }
-
-  // convert to hbase put
-  def toPut(pair: (Long, Array[Byte])) = {
-
+  def toPut(pair: (Long, String)) = {
     // showRequestId's hashcode used for rowkey for random distributed
     val rowkey = pair._1.toString.hashCode
 
     val raw = pair._2
-    val event = LogUtils.thriftBinarydecoder(raw, classOf[UnitedEvent])
+    val event = LogUtils.ThriftBase64decoder(raw, classOf[UnitedEvent])
     val logId = event.getLogId
     val eventType = event.getEventType.getType
     val ts = event.getEventTime
@@ -163,13 +185,13 @@ object DSPRealTimeSessionization {
 
     if (eventType == 200) {
       // e.u
-      put.addColumn(Bytes.toBytes("u"), Bytes.toBytes(logId), ts, raw)
+      put.addColumn(Bytes.toBytes("u"), Bytes.toBytes(logId), ts, Bytes.toBytes(raw))
     } else if (eventType == 115) {
       // e.s
-      put.addColumn(Bytes.toBytes("s"), Bytes.toBytes(logId), ts, raw)
+      put.addColumn(Bytes.toBytes("s"), Bytes.toBytes(logId), ts, Bytes.toBytes(raw))
     } else if (eventType == 99) {
       // e.c
-      put.addColumn(Bytes.toBytes("c"), Bytes.toBytes(logId), ts, raw)
+      put.addColumn(Bytes.toBytes("c"), Bytes.toBytes(logId), ts, Bytes.toBytes(raw))
     }
 
     (new ImmutableBytesWritable, put)
