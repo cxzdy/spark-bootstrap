@@ -48,7 +48,7 @@ object DSPRealTimeSessionization {
     val zkSessionTimeoutMs = 6000
     val zkConnectionTimeoutMs = 6000
     val zkClient = new ZkClient(zkConnect, zkSessionTimeoutMs, zkConnectionTimeoutMs)
-    val zkUtils = ZkUtils(zkClient,false)
+    val zkUtils = ZkUtils(zkClient, false)
     val zkAppPath = s"/streaming/${appName}"
     log.info(s"Initializing Job monitor ZK Path, zkConnect: ${zkConnect} ; " +
       s"zkSessionTimeoutMs: ${zkSessionTimeoutMs} ; zkConnectionTimeoutMs: ${zkConnectionTimeoutMs} ; zkAppPath: ${zkAppPath}")
@@ -101,25 +101,45 @@ object DSPRealTimeSessionization {
             else if (eventType == 99) "c"
             else throw new SparkException(s"not supported eventType: ${eventType}, only support topic .u/.s/.c")
 
-            if (eventType == 200 || eventType == 115) {
-              // .u or .s flatten impressionInfos
-              val impressionInfos = ue.getAdvertisementInfo.getImpressionInfos
-              impressionInfos.map(impressionInfo => {
-                val showRequestId = impressionInfo.getShowRequestId
+            //            if (eventType == 200 || eventType == 115) {
+            //              // .u or .s flatten impressionInfos
+            //              val impressionInfos = ue.getAdvertisementInfo.getImpressionInfos
+            //              impressionInfos.map(impressionInfo => {
+            //                val showRequestId = impressionInfo.getShowRequestId
+            //                val rowkey = s"${showRequestId.toString.hashCode}#${showRequestId.toString}"
+            //
+            //                val put = new Put(Bytes.toBytes(rowkey))
+            //                put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
+            //                (new ImmutableBytesWritable, put)
+            //              })
+            //            } else {
+            //              // .c
+            //              val impressionInfo = ue.getAdvertisementInfo.getImpressionInfo
+            //              val showRequestId = impressionInfo.getShowRequestId
+            //              val rowkey = s"${showRequestId.toString.hashCode}#${showRequestId.toString}"
+            //
+            //              val put = new Put(Bytes.toBytes(rowkey))
+            //              put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
+            //              Seq((new ImmutableBytesWritable, put))
+            //            }
+            val ad = ue.getAdvertisementInfo
 
-                val put = new Put(Bytes.toBytes(showRequestId.toString.hashCode))
-                put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
-                (new ImmutableBytesWritable, put)
-              })
+            val impressionInfos = if (eventType == 200 || eventType == 115) {
+              ad.getImpressionInfos.asInstanceOf[java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]]
             } else {
-              // .c
-              val impressionInfo = ue.getAdvertisementInfo.getImpressionInfo
-              val showRequestId = impressionInfo.getShowRequestId
-
-              val put = new Put(Bytes.toBytes(showRequestId.toString.hashCode))
-              put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
-              Seq((new ImmutableBytesWritable, put))
+              val clickImpressionInfos = new java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]()
+              clickImpressionInfos.add(ad.getImpressionInfo)
+              clickImpressionInfos
             }
+
+            impressionInfos.map(impressionInfo => {
+              val showRequestId = impressionInfo.getShowRequestId
+              val rowkey = s"${showRequestId.toString.hashCode}#${showRequestId.toString}"
+
+              val put = new Put(Bytes.toBytes(rowkey))
+              put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
+              (new ImmutableBytesWritable, put)
+            })
           } else {
             Seq()
           }
