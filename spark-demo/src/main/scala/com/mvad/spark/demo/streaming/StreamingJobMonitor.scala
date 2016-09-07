@@ -37,7 +37,7 @@ class StreamingJobMonitor(zkUtils: ZkUtils, zkAppPath: String) extends Streaming
   override def onBatchCompleted(batchCompleted: StreamingListenerBatchCompleted) {
     val progressInfo = s"{totalDelay:${batchCompleted.batchInfo.totalDelay.getOrElse(0)}," +
       s"schedulingDelay:${batchCompleted.batchInfo.schedulingDelay.getOrElse(0)}," +
-      s"processingDelay:${batchCompleted.batchInfo.processingDelay.getOrElse(0)}"
+      s"processingDelay:${batchCompleted.batchInfo.processingDelay.getOrElse(0)}}"
     zkUtils.updatePersistentPath(jobProgress, progressInfo)
   }
 }

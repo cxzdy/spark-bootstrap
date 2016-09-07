@@ -15,6 +15,8 @@ $SPARK_HOME/bin/spark-submit \
 --conf spark.dynamicAllocation.enabled=false \
 --conf spark.shuffle.service.enabled=false \
 --conf spark.cores.max=700 \
+--conf spark.scheduler.maxRegisteredResourcesWaitingTime=180s \
+--conf spark.scheduler.minRegisteredResourcesRatio=1.0 \
 --conf spark.streaming.stopGracefullyOnShutdown=true \
 --conf spark.streaming.kafka.maxRatePerPartition=2000 \
 --conf spark.streaming.blockInterval=500ms \
