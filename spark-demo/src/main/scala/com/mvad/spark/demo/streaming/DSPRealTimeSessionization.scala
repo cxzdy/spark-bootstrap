@@ -1,5 +1,6 @@
 package com.mvad.spark.demo.streaming
 
+import java.util
 import java.util.Base64
 
 import kafka.utils._
@@ -125,11 +126,9 @@ object DSPRealTimeSessionization {
             val ad = ue.getAdvertisementInfo
 
             val impressionInfos = if (eventType == 200 || eventType == 115) {
-              ad.getImpressionInfos.asInstanceOf[java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]]
+              ad.getImpressionInfos.asInstanceOf[java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]].toList
             } else {
-              val clickImpressionInfos = new java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]()
-              clickImpressionInfos.add(ad.getImpressionInfo)
-              clickImpressionInfos
+              Seq(ad.getImpressionInfo).toList
             }
 
             impressionInfos.map(impressionInfo => {
