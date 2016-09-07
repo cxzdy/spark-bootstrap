@@ -10,13 +10,13 @@ import org.slf4j.LoggerFactory
   * Monitoring Spark Streaming Job
   * put job info/progress to zookeeper
   */
-class StreamingJobMonitor(ssc: StreamingContext, zkClient: ZkClient) extends StreamingListener {
+class StreamingJobMonitor(zkClient: ZkClient, zkAppPath: String) extends StreamingListener {
   val log = LoggerFactory.getLogger(this.getClass)
-  log.info("Initializing StreamingJobMonitor ...")
 
-  val zkRootPath = s"/streaming/${ssc.sparkContext.getConf.get("spark.app.name")}/${ssc.sparkContext.getConf.getAppId}"
-  val receivers = s"${zkRootPath}/receiver"
-  val jobProgress = s"${zkRootPath}/progress"
+  val receivers = s"${zkAppPath}/receiver"
+  val jobProgress = s"${zkAppPath}/progress"
+
+  log.info(s"Initializing StreamingJobMonitor , zk Path : ${zkAppPath}...")
   ZkUtils.makeSurePersistentPathExists(zkClient, receivers)
   ZkUtils.makeSurePersistentPathExists(zkClient, jobProgress)
 
