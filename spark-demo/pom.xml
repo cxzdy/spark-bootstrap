@@ -61,13 +61,13 @@
     </dependency>
     <dependency>
       <groupId>org.apache.spark</groupId>
-      <artifactId>spark-streaming-kafka-0-8_${scala.binary.version}</artifactId>
+      <artifactId>spark-streaming-kafka-0-10_${scala.binary.version}</artifactId>
       <version>${spark.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka_${scala.binary.version}</artifactId>
-      <version>0.8.2.1</version>
+      <version>0.10.0.0</version>
       <exclusions>
         <exclusion>
           <groupId>com.sun.jmx</groupId>
