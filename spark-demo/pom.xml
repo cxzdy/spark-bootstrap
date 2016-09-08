@@ -92,6 +92,11 @@
       </exclusions>
     </dependency>
     <dependency>
+      <groupId>com.101tec</groupId>
+      <artifactId>zkclient</artifactId>
+      <version>0.8</version>
+    </dependency>
+    <dependency>
       <groupId>net.jpountz.lz4</groupId>
       <artifactId>lz4</artifactId>
       <version>1.2.0</version>
@@ -148,6 +153,17 @@
         <exclusion>
           <groupId>org.apache.hadoop</groupId>
           <artifactId>hadoop-annotations</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.hbase</groupId>
+      <artifactId>asynchbase</artifactId>
+      <version>1.7.0</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.slf4j</groupId>
+          <artifactId>log4j-over-slf4j</artifactId>
         </exclusion>
       </exclusions>
     </dependency>

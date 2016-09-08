@@ -23,7 +23,7 @@ $SPARK_HOME/bin/spark-submit \
 --conf spark.streaming.backpressure.enabled=true \
 --driver-memory 5G \
 --executor-cores 1 --executor-memory 3g \
---class com.mvad.spark.demo.streaming.DSPRealTimeSessionization $SPARK_JAR d.u.6,d.u.6.m,d.s.6,d.s.6.m,d.c.6,d.c.6.m 5 dspsession
+--class com.mvad.spark.demo.streaming.DSPRealTimeSessionization $SPARK_JAR DSPRealTimeSessionization d.u.6,d.u.6.m,d.s.6,d.s.6.m,d.c.6,d.c.6.m 5 dspsession
 
 
 
