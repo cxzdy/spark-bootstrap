@@ -4,7 +4,7 @@ import kafka.utils._
 import org.I0Itec.zkclient.ZkClient
 import org.I0Itec.zkclient.exception.ZkMarshallingError
 import org.I0Itec.zkclient.serialize.ZkSerializer
-import org.apache.spark.streaming.StreamingContext
+import org.apache.spark.SparkConf
 import org.apache.spark.streaming.scheduler._
 import org.slf4j.LoggerFactory
 
@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory
   * Monitoring Spark Streaming Job
   * put job info/progress to zookeeper
   */
-class StreamingJobMonitor(ssc: StreamingContext) extends StreamingListener {
+class StreamingJobMonitor(sc: SparkConf) extends StreamingListener {
   val log = LoggerFactory.getLogger(this.getClass)
 
   // initialize zkClient for job monitoring
@@ -22,7 +22,7 @@ class StreamingJobMonitor(ssc: StreamingContext) extends StreamingListener {
   val zkConnectionTimeoutMs = 6000
   val zkClient = new ZkClient(zkConnect, zkSessionTimeoutMs, zkConnectionTimeoutMs, ZKStringSerializer)
   val zkUtils = ZkUtils(zkClient, false)
-  val zkAppPath = s"/streaming/${ssc.sparkContext.getConf.get("spark.app.name")}"
+  val zkAppPath = s"/streaming/${sc.get("spark.app.name")}"
   log.info(s"Initializing Job monitor ZK Path, zkConnect: ${zkConnect} ; " +
     s"zkSessionTimeoutMs: ${zkSessionTimeoutMs} ; zkConnectionTimeoutMs: ${zkConnectionTimeoutMs} ; zkAppPath: ${zkAppPath}")
 
