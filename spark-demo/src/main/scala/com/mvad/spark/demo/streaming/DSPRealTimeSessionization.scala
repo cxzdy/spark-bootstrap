@@ -32,12 +32,15 @@ object DSPRealTimeSessionization {
 
     val Array(appName, topics, batchInteval, htablename) = args
     val sparkConf = new SparkConf().setAppName(appName)
+    sparkConf.set("spark.scheduler.mode", "FAIR")
+
     val sc = new SparkContext(sparkConf)
+    sc.setLocalProperty("spark.scheduler.pool", "etl")
+
+    val ssc = new StreamingContext(sc, Seconds(batchInteval.toInt))
+    ssc.checkpoint(s"checkpoint-${appName}")
 
     try {
-
-      val ssc = new StreamingContext(sc, Seconds(batchInteval.toInt))
-      ssc.checkpoint(s"checkpoint-${appName}")
 
       val conf = HBaseConfiguration.create()
       conf.set("hbase.zookeeper.quorum", "nn7ss.prod.mediav.com,nn8ss.prod.mediav.com,nn9ss.prod.mediav.com")
@@ -60,59 +63,63 @@ object DSPRealTimeSessionization {
       val kafkaStream = KafkaUtils.createDirectStream[String, String](ssc,
         LocationStrategies.PreferConsistent, ConsumerStrategies.Subscribe[String, String](topicsSet, kafkaParams))
 
-      kafkaStream.foreachRDD { rdd =>
-        val offsets = rdd.asInstanceOf[HasOffsetRanges].offsetRanges
-
-        val puts = rdd.map(record => record.value).flatMap(line => {
-
-          val raw = Base64.getDecoder.decode(line)
-          val ue = com.mediav.data.log.LogUtils.ThriftBase64decoder(line, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
-          val eventType = ue.getEventType.getType
-          val family = if (eventType == 200) "u"
-          else if (eventType == 115) "s"
-          else if (eventType == 99) "c"
-          else throw new SparkException(s"not supported eventType: ${eventType}, only support topic .u/.s/.c")
-
-          // got all impressions
-          val impressionInfos = if (ue != null && ue.isSetAdvertisementInfo && (ue.getAdvertisementInfo.isSetImpressionInfos || ue.getAdvertisementInfo.isSetImpressionInfo)) {
-            if (eventType == 200 || eventType == 115) {
-              ue.getAdvertisementInfo.getImpressionInfos.asInstanceOf[java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]].toList
-            } else {
-              Seq(ue.getAdvertisementInfo.getImpressionInfo).toList
-            }
-          } else {
-            Seq()
-          }
-
-          // transform to put format
-          val putRecords = impressionInfos.map(impressionInfo => {
-            val showRequestId = impressionInfo.getShowRequestId
-            val rowkey = s"${showRequestId.toString.hashCode}#${showRequestId.toString}"
-
-            val put = new Put(Bytes.toBytes(rowkey))
-            put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
-            // put format : (Array[Byte], Array[(Array[Byte], Array[Byte], Long, Array[Byte])])
-            (Bytes.toBytes(rowkey), Array((Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)))
-          })
-          putRecords
-        })
-
-        hbaseContext.bulkPut[(Array[Byte], Array[(Array[Byte], Array[Byte], Long, Array[Byte])])](puts, TableName.valueOf(htablename), (putRecord) => {
-          val put = new Put(putRecord._1)
-          putRecord._2.foreach((putValue) =>
-            put.addColumn(putValue._1, putValue._2, putValue._3, putValue._4))
-          put
-        })
-
+      // record Zk Offsets for committing later after successed putting into hbase
+      var offsetRanges = Array[OffsetRange]()
+      val stream = kafkaStream.transform { rdd =>
+        offsetRanges = rdd.asInstanceOf[HasOffsetRanges].offsetRanges
         // commit offsets back to kafka
-        kafkaStream.asInstanceOf[CanCommitOffsets].commitAsync(offsets)
+        kafkaStream.asInstanceOf[CanCommitOffsets].commitAsync(offsetRanges)
+        rdd
       }
+
+      // convert to put
+      val puts = stream.map(record => record.value).flatMap(line => {
+
+        val raw = Base64.getDecoder.decode(line)
+        val ue = com.mediav.data.log.LogUtils.ThriftBase64decoder(line, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
+        val eventType = ue.getEventType.getType
+        val family = if (eventType == 200) "u"
+        else if (eventType == 115) "s"
+        else if (eventType == 99) "c"
+        else throw new SparkException(s"not supported eventType: ${eventType}, only support topic .u/.s/.c")
+
+        // got all impressions
+        val impressionInfos = if (ue != null && ue.isSetAdvertisementInfo && (ue.getAdvertisementInfo.isSetImpressionInfos || ue.getAdvertisementInfo.isSetImpressionInfo)) {
+          if (eventType == 200 || eventType == 115) {
+            ue.getAdvertisementInfo.getImpressionInfos.asInstanceOf[java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]].toList
+          } else {
+            Seq(ue.getAdvertisementInfo.getImpressionInfo).toList
+          }
+        } else {
+          Seq()
+        }
+
+        // transform to put format
+        val putRecords = impressionInfos.map(impressionInfo => {
+          val showRequestId = impressionInfo.getShowRequestId
+          val rowkey = s"${showRequestId.toString.hashCode}#${showRequestId.toString}"
+
+          val put = new Put(Bytes.toBytes(rowkey))
+          put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
+          // put format : (Array[Byte], Array[(Array[Byte], Array[Byte], Long, Array[Byte])])
+          (Bytes.toBytes(rowkey), Array((Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)))
+        })
+        putRecords
+      })
+
+      // bulk put to hbase
+      hbaseContext.streamBulkPut[(Array[Byte], Array[(Array[Byte], Array[Byte], Long, Array[Byte])])](puts, TableName.valueOf(htablename), (putRecord) => {
+        val put = new Put(putRecord._1)
+        putRecord._2.foreach((putValue) =>
+          put.addColumn(putValue._1, putValue._2, putValue._3, putValue._4))
+        put
+      })
 
       ssc.addStreamingListener(new StreamingJobMonitor(sparkConf))
       ssc.start()
       ssc.awaitTermination()
     } finally {
-      sc.stop()
+      ssc.stop()
     }
   }
 
