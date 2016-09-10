@@ -7,10 +7,11 @@ import kafka.serializer.StringDecoder
 import kafka.utils.{ZKStringSerializer, ZkUtils}
 import kafka.common.TopicAndPartition
 import org.I0Itec.zkclient.ZkClient
-import org.apache.hadoop.hbase.HBaseConfiguration
+import org.apache.hadoop.hbase.{HBaseConfiguration, TableName}
 import org.apache.hadoop.hbase.client.Put
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import org.apache.hadoop.hbase.mapreduce.TableOutputFormat
+import org.apache.hadoop.hbase.spark.HBaseContext
 import org.apache.hadoop.hbase.util.Bytes
 import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming._
@@ -24,36 +25,33 @@ import scala.collection.JavaConversions._
 /**
   * Usage:
   * spark-submit --class \
-  * com.mvad.spark.demo.hbase.DSPRealTimeSessionization d.u.6,d.u.6.m,d.s.6,d.s.6.m,d.c.6,d.c.6.m 5 dspsession
+  * com.mvad.spark.demo.hbase.DSPRealTimeSessionization DSPRealTimeSessionization d.u.6,d.u.6.m,d.s.6,d.s.6.m,d.c.6,d.c.6.m 5 dspsession
   */
 object DSPRealTimeSessionization {
   val log = LoggerFactory.getLogger(this.getClass)
 
   def main(args: Array[String]) {
-    if (args.length != 3) {
-      System.err.println("Usage: RealTimeSessionization <topics> <batchInteval> <htablename>")
+    if (args.length != 4) {
+      System.err.println(s"Usage: ${this.getClass.getCanonicalName} <appName> <topics> <batchInteval> <htablename>")
       System.exit(1)
     }
 
     log.info(s"Starting SparkStreaming Job : ${this.getClass.getName}")
 
-    val Array(topics, batchInteval, htablename) = args
-
-    val appName = this.getClass.getSimpleName
+    val Array(appName, topics, batchInteval, htablename) = args
     val sparkConf = new SparkConf().setAppName(appName)
+    sparkConf.set("spark.scheduler.mode", "FAIR")
+
     val sc = new SparkContext(sparkConf)
+    sc.setLocalProperty("spark.scheduler.pool", "etl")
+
     val ssc = new StreamingContext(sc, Seconds(batchInteval.toInt))
     ssc.checkpoint(s"checkpoint-${appName}")
 
-
-    // initialize zkClient for job monitoring
-    val zkConnect = "zk1ss.prod.mediav.com:2191,zk2ss.prod.mediav.com:2191,zk3ss.prod.mediav.com:2191,zk12ss.prod.mediav.com:2191,zk13ss.prod.mediav.com:2191"
-    val zkSessionTimeoutMs = 6000
-    val zkConnectionTimeoutMs = 6000
-    val zkClient = new ZkClient(zkConnect, zkSessionTimeoutMs, zkConnectionTimeoutMs, ZKStringSerializer)
-    val zkAppPath = s"/streaming/${appName}"
-    log.info(s"Initializing Job monitor ZK Path, zkConnect: ${zkConnect} ; " +
-      s"zkSessionTimeoutMs: ${zkSessionTimeoutMs} ; zkConnectionTimeoutMs: ${zkConnectionTimeoutMs} ; zkAppPath: ${zkAppPath}")
+    val conf = HBaseConfiguration.create()
+    conf.set("hbase.zookeeper.quorum", "nn7ss.prod.mediav.com,nn8ss.prod.mediav.com,nn9ss.prod.mediav.com")
+    conf.setLong("hbase.client.write.buffer", 3 * 1024 * 1024)
+    val hbaseContext = new HBaseContext(sc, conf)
 
     /* using receiver mode */
     //    val topicMap = topics.split(",").map((_, numThreadsPerReceiver.toInt)).toMap
@@ -76,7 +74,7 @@ object DSPRealTimeSessionization {
 
     /* update Zk Offsets */
     var offsetRanges = Array[OffsetRange]()
-    val rdd = kafkaStream.transform { rdd =>
+    val stream = kafkaStream.transform { rdd =>
       offsetRanges = rdd.asInstanceOf[HasOffsetRanges].offsetRanges
       for (offsets <- offsetRanges) {
         val topicAndPartition = TopicAndPartition(offsets.topic, offsets.partition)
@@ -88,14 +86,46 @@ object DSPRealTimeSessionization {
       rdd
     }
 
-    saveToHBase(rdd, htablename)
+    // convert to put
+    val puts = stream.map(record => record._2).flatMap(line => {
 
-    ssc.addStreamingListener(new StreamingJobMonitor(zkClient, zkAppPath))
-    Runtime.getRuntime.addShutdownHook(new Thread() {
-      override def run(): Unit = {
-        ZkUtils.deletePath(zkClient, zkAppPath)
+      val raw = Base64.getDecoder.decode(line)
+      val ue = com.mediav.data.log.LogUtils.ThriftBase64decoder(line, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
+      val eventType = ue.getEventType.getType
+      val family = if (eventType == 200) "u"
+      else if (eventType == 115) "s"
+      else if (eventType == 99) "c"
+      else throw new SparkException(s"not supported eventType: ${eventType}, only support topic .u/.s/.c")
+
+      // got all impressions
+      val impressionInfos = if (ue != null && ue.isSetAdvertisementInfo && (ue.getAdvertisementInfo.isSetImpressionInfos || ue.getAdvertisementInfo.isSetImpressionInfo)) {
+        if (eventType == 200 || eventType == 115) {
+          ue.getAdvertisementInfo.getImpressionInfos.asInstanceOf[java.util.ArrayList[com.mediav.data.log.unitedlog.ImpressionInfo]].toList
+        } else {
+          Seq(ue.getAdvertisementInfo.getImpressionInfo).toList
+        }
+      } else {
+        Seq()
       }
+
+      // transform to put format
+      val putRecords = impressionInfos.map(impressionInfo => {
+        val showRequestId = impressionInfo.getShowRequestId
+        val rowkey = s"${showRequestId.toString.hashCode}#${showRequestId.toString}"
+
+        val put = new Put(Bytes.toBytes(rowkey))
+        put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
+        (new ImmutableBytesWritable, put)
+      })
+      putRecords
     })
+
+    hbaseContext.streamBulkPut[(ImmutableBytesWritable, Put)](puts,TableName.valueOf(htablename), putRecord => putRecord._2)
+
+//    saveToHBase(rdd, htablename)
+
+
+    ssc.addStreamingListener(new StreamingJobMonitor(sparkConf))
     ssc.start()
     ssc.awaitTermination()
   }
@@ -107,7 +137,7 @@ object DSPRealTimeSessionization {
       try {
         val puts = rdd.flatMap(line => {
           val raw = Base64.getDecoder.decode(line)
-          val ue = LogUtils.ThriftBase64decoder(line, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
+          val ue = LogUtils.thriftBinarydecoder(raw, classOf[com.mediav.data.log.unitedlog.UnitedEvent])
           if (ue != null && ue.isSetAdvertisementInfo && (ue.getAdvertisementInfo.isSetImpressionInfo || ue.getAdvertisementInfo.isSetImpressionInfos)) {
             val eventType = ue.getEventType.getType
             val family = if (eventType == 200) "u"
