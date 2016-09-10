@@ -101,19 +101,12 @@ object DSPRealTimeSessionization {
 
           val put = new Put(Bytes.toBytes(rowkey))
           put.addColumn(Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)
-          // put format : (Array[Byte], Array[(Array[Byte], Array[Byte], Long, Array[Byte])])
-          (Bytes.toBytes(rowkey), Array((Bytes.toBytes(family), Bytes.toBytes(ue.getLogId), ue.getEventTime, raw)))
+          put
         })
         putRecords
       })
 
-      // bulk put to hbase
-      hbaseContext.streamBulkPut[(Array[Byte], Array[(Array[Byte], Array[Byte], Long, Array[Byte])])](puts, TableName.valueOf(htablename), (putRecord) => {
-        val put = new Put(putRecord._1)
-        putRecord._2.foreach((putValue) =>
-          put.addColumn(putValue._1, putValue._2, putValue._3, putValue._4))
-        put
-      })
+      hbaseContext.streamBulkPut[Put](puts,TableName.valueOf(htablename), put => put)
 
       ssc.addStreamingListener(new StreamingJobMonitor(sparkConf))
       ssc.start()
